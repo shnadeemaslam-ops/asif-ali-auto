@@ -5,16 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Asif Ali Auto Oil">
+<meta name="apple-mobile-web-app-title" content="Asif Ali Mobil Oil">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0B1220">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230B1220'/%3E%3Ccircle cx='50' cy='50' r='30' fill='%23F2A93B'/%3E%3C/svg%3E">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Asif Ali Auto Mobile Oil Shop</title>
+<title>Asif Ali Mobil Oil Shop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<!-- Firebase (Firestore cloud sync) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script>
+/* =========================================================================
+   FIREBASE CONFIG — paste the config object from:
+   Firebase Console → Project Settings (⚙️) → General → Your apps → Web app
+   ========================================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAsgr_gW0gnNC-r40fjlAxNNP5ZGNaS26c",
+  authDomain: "asif-ali-auto-mobile-oil-shop.firebaseapp.com",
+  projectId: "asif-ali-auto-mobile-oil-shop",
+  storageBucket: "asif-ali-auto-mobile-oil-shop.firebasestorage.app",
+  messagingSenderId: "45088239155",
+  appId: "1:45088239155:web:ef0bdbc68a7f52cd00bd46",
+  measurementId: "G-28TWX7BQVH"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+</script>
 <style>
   :root{
     --bg:#0B1220;
@@ -319,7 +340,7 @@
 <body>
 <div id="app">
   <header>
-    <div class="shopname"><span class="dot"></span><span id="shopNameText">Asif Ali Auto Mobile Oil Shop</span></div>
+    <div class="shopname"><span class="dot"></span><span id="shopNameText">Asif Ali Mobil Oil Shop</span></div>
     <div style="display:flex; gap:4px;">
       <button class="icon-btn" id="lockBtn" style="display:none" onclick="lockApp()" title="Lock App">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
@@ -388,75 +409,80 @@
    ========================================================================= */
 const APP_INSTANCE_ID = 'asifaliauto';
 
-const DB_NAME = APP_INSTANCE_ID + '-db';
-const DB_VERSION = 1;
-let _idb = null;
-function idbOpen(){
-  return new Promise((resolve, reject)=>{
-    if(_idb) return resolve(_idb);
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e)=>{
-      const d = e.target.result;
-      if(!d.objectStoreNames.contains('shop')) d.createObjectStore('shop', {keyPath:'key'});
-      if(!d.objectStoreNames.contains('items')) d.createObjectStore('items', {keyPath:'id'});
-      if(!d.objectStoreNames.contains('sales')) d.createObjectStore('sales', {keyPath:'date'});
-      if(!d.objectStoreNames.contains('invoices')) d.createObjectStore('invoices', {keyPath:'invoiceNumber'});
-    };
-    req.onsuccess = (e)=>{ _idb = e.target.result; resolve(_idb); };
-    req.onerror = (e)=> reject(e.target.error);
+const DB_NAME = APP_INSTANCE_ID + '-db'; // kept for reference only, unused now
+/* ---------------- CLOUD DATA LAYER (Firestore) ----------------
+   Same function names/signatures as the old IndexedDB layer
+   (idbGet, idbGetAll, idbPut, idbDelete, idbClearAndFill, idbPutMany)
+   so every load()/save() function elsewhere in this file works unchanged.
+   Each "store" (shop/items/sales/invoices) becomes a Firestore collection;
+   the object's key field becomes the Firestore document ID. ---------------- */
+const FIRESTORE_KEYFIELD = { shop: 'key', items: 'id', sales: 'date', invoices: 'invoiceNumber' };
+let cloudStatus = 'connecting'; // connecting | online | error
+let _authReady = null;
+function ensureAuthReady(){
+  if(_authReady) return _authReady;
+  _authReady = new Promise((resolve)=>{
+    firebase.auth().onAuthStateChanged(user=>{
+      if(user){ cloudStatus='online'; resolve(user); }
+      else{
+        firebase.auth().signInAnonymously().catch(e=>{
+          cloudStatus='error'; console.error('Firebase auth error', e);
+          showToast('Cloud connection failed — check internet');
+        });
+      }
+    }, err=>{ cloudStatus='error'; console.error(err); });
   });
+  return _authReady;
 }
-function idbGet(storeName, key){
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readonly');
-    const req = tx.objectStore(storeName).get(key);
-    req.onsuccess = ()=> resolve(req.result || null);
-    req.onerror = (e)=> reject(e.target.error);
-  }));
+function idbOpen(){ return ensureAuthReady(); } // kept only so nothing else breaks if referenced
+async function idbGet(storeName, key){
+  await ensureAuthReady();
+  const snap = await db.collection(storeName).doc(String(key)).get();
+  return snap.exists ? snap.data() : null;
 }
-function idbGetAll(storeName){
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readonly');
-    const req = tx.objectStore(storeName).getAll();
-    req.onsuccess = ()=> resolve(req.result || []);
-    req.onerror = (e)=> reject(e.target.error);
-  }));
+async function idbGetAll(storeName){
+  await ensureAuthReady();
+  const snap = await db.collection(storeName).get();
+  return snap.docs.map(d=>d.data());
 }
-function idbPut(storeName, value){
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readwrite');
-    tx.objectStore(storeName).put(value);
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = (e)=> reject(e.target.error);
-  }));
+async function idbPut(storeName, value){
+  await ensureAuthReady();
+  const keyField = FIRESTORE_KEYFIELD[storeName] || 'id';
+  await db.collection(storeName).doc(String(value[keyField])).set(value);
+  return true;
 }
-function idbDelete(storeName, key){
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readwrite');
-    tx.objectStore(storeName).delete(key);
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = (e)=> reject(e.target.error);
-  }));
+async function idbDelete(storeName, key){
+  await ensureAuthReady();
+  await db.collection(storeName).doc(String(key)).delete();
+  return true;
 }
-function idbClearAndFill(storeName, arr){
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    store.clear();
-    (arr||[]).forEach(item=> store.put(item));
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = (e)=> reject(e.target.error);
-  }));
+async function idbClearAndFill(storeName, arr){
+  await ensureAuthReady();
+  const keyField = FIRESTORE_KEYFIELD[storeName] || 'id';
+  const existing = await db.collection(storeName).get();
+  let batch = db.batch(), count = 0;
+  for(const doc of existing.docs){
+    batch.delete(doc.ref); count++;
+    if(count>=400){ await batch.commit(); batch = db.batch(); count=0; }
+  }
+  for(const item of (arr||[])){
+    batch.set(db.collection(storeName).doc(String(item[keyField])), item); count++;
+    if(count>=400){ await batch.commit(); batch = db.batch(); count=0; }
+  }
+  if(count>0) await batch.commit();
+  return true;
 }
-function idbPutMany(storeName, arr){
-  if(!arr || !arr.length) return Promise.resolve(true);
-  return idbOpen().then(d=> new Promise((resolve, reject)=>{
-    const tx = d.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    arr.forEach(item=> store.put(item));
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = (e)=> reject(e.target.error);
-  }));
+async function idbPutMany(storeName, arr){
+  if(!arr || !arr.length) return true;
+  await ensureAuthReady();
+  const keyField = FIRESTORE_KEYFIELD[storeName] || 'id';
+  let batch = db.batch(), count = 0;
+  for(const item of arr){
+    batch.set(db.collection(storeName).doc(String(item[keyField])), item); count++;
+    if(count>=400){ await batch.commit(); batch = db.batch(); count=0; }
+  }
+  if(count>0) await batch.commit();
+  return true;
 }
 // Kept so code pasted in from later parts (originally written for the cloud
 // version) doesn't break if it still calls this — it's a no-op offline.
@@ -549,7 +575,7 @@ async function saveItemsBatch(itemsArr){
 }
 
 /* ---------------- SETTINGS ---------------- */
-let settings = { shopName: 'Asif Ali Auto Mobile Oil Shop' };
+let settings = { shopName: 'Asif Ali Mobil Oil Shop' };
 async function loadSettings(){
   try{
     const doc = await idbGet('shop', 'settings');
@@ -668,6 +694,14 @@ function todayStr(){
 }
 function fmtMoney(n){ return 'Rs '+Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+/* ---------------- UNIT HELPERS (pcs / Liters) ---------------- */
+function isLiterUnit(item){ return item && item.unit==='L'; }
+function fmtQtyNum(qty, item){
+  const n = Number(qty)||0;
+  return isLiterUnit(item) ? (Math.round(n*100)/100).toString() : Math.round(n).toString();
+}
+function unitSuffix(item){ return isLiterUnit(item) ? 'L' : 'pcs'; }
+function fmtQtyWithUnit(qty, item){ return fmtQtyNum(qty, item)+' '+unitSuffix(item); }
 function escJs(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function showToast(msg){
   const t = document.createElement('div');
@@ -1011,7 +1045,7 @@ function renderDashSearchResults(){
   if(itemMatches.length>0){
     html += `<div class="section-title">Items</div><div class="card">` + itemMatches.map(i=>{
       const badgeClass = i.qty===0?'out':(i.qty<=2?'low':'ok');
-      const badgeText = i.qty===0?'Out':i.qty+' pcs';
+      const badgeText = i.qty===0?'Out':fmtQtyWithUnit(i.qty,i);
       const catLabel = [i.category, i.partType, i.subPartType].filter(Boolean).join(' · ');
       const modelsHtml = (i.models&&i.models.length>0) ? `<div class="item-cat" style="margin-top:2px">Fits: ${highlightModels(i.models, q)}</div>` : '';
       return `<div style="padding:8px 0; border-bottom:1px solid var(--border)">
@@ -1302,7 +1336,7 @@ async function renderInventory(){
 
   function renderItemCard(i){
     const badgeClass = i.qty===0?'out':(i.qty<=2?'low':'ok');
-    const badgeText = i.qty===0?'Out':i.qty+' pcs';
+    const badgeText = i.qty===0?'Out':fmtQtyWithUnit(i.qty,i);
     const modelsHtml = (i.models&&i.models.length>0) ? `<div class="item-cat" style="margin-top:4px">Fits: ${highlightModels(i.models, q)}</div>` : '';
     const catLabel = [i.category, i.partType, i.subPartType].filter(Boolean).join(' · ');
     const latestSeller = getLatestSellerForItem(i);
@@ -1518,8 +1552,19 @@ function openItemModal(id, defaultCategory, defaultPartType, defaultSubType){
         <div><label>Cost Price</label><input id="f_cost" type="number" inputmode="decimal" value="${editing?editing.cost:''}" placeholder="0"></div>
         <div><label>Selling Price</label><input id="f_sell" type="number" inputmode="decimal" value="${editing?editing.sell:''}" placeholder="0"></div>
       </div>
-      <label>Stock Quantity</label>
-      <input id="f_qty" type="number" inputmode="numeric" value="${editing?editing.qty:''}" placeholder="0">
+      <div class="row2">
+        <div>
+          <label>Stock Quantity</label>
+          <input id="f_qty" type="number" inputmode="decimal" step="${editing&&editing.unit==='L'?'0.1':'1'}" value="${editing?editing.qty:''}" placeholder="0">
+        </div>
+        <div>
+          <label>Unit</label>
+          <select id="f_unit" onchange="document.getElementById('f_qty').step = this.value==='L' ? '0.1' : '1';">
+            <option value="pcs" ${(!editing||editing.unit!=='L')?'selected':''}>Pieces (pcs)</option>
+            <option value="L" ${(editing&&editing.unit==='L')?'selected':''}>Liters (L)</option>
+          </select>
+        </div>
+      </div>
       <label>Seller / Purchased From (optional)</label>
       <input id="f_seller" list="sellerDatalist" placeholder="e.g. Karachi Computer">
       <datalist id="sellerDatalist">
@@ -1886,7 +1931,8 @@ async function saveItemForm(id){
   if(subPartType==='__add_new__' || subPartType==='') subPartType = null;
   const cost = parseFloat(document.getElementById('f_cost').value)||0;
   const sell = parseFloat(document.getElementById('f_sell').value)||0;
-  const qty = parseInt(document.getElementById('f_qty').value)||0;
+  const unit = document.getElementById('f_unit') ? document.getElementById('f_unit').value : 'pcs';
+  const qty = unit==='L' ? (parseFloat(document.getElementById('f_qty').value)||0) : (parseInt(document.getElementById('f_qty').value)||0);
   const models = document.getElementById('f_models').value.split(/[,=]/).map(m=>m.trim()).filter(m=>m.length>0);
   const sellerName = document.getElementById('f_seller') ? document.getElementById('f_seller').value.trim() : '';
   const tagExistingStock = document.getElementById('f_seller_tag_existing') ? document.getElementById('f_seller_tag_existing').checked : false;
@@ -1896,7 +1942,7 @@ async function saveItemForm(id){
   if(id){
     const it = items.find(i=>i.id===id);
     const originalQty = it.qty||0;
-    Object.assign(it, {name, category:cat, partType, subPartType, cost, sell, qty, models, image: pendingItemImage});
+    Object.assign(it, {name, category:cat, partType, subPartType, cost, sell, qty, unit, models, image: pendingItemImage});
     if(sellerName){
       if(!it.purchaseHistory) it.purchaseHistory = [];
       const qtyAdded = qty - originalQty;
@@ -1911,7 +1957,7 @@ async function saveItemForm(id){
     }
     savedItem = it;
   } else {
-    savedItem = {id:uid(), name, category:cat, partType, subPartType, cost, sell, qty, models, image: pendingItemImage, purchaseHistory: []};
+    savedItem = {id:uid(), name, category:cat, partType, subPartType, cost, sell, qty, unit, models, image: pendingItemImage, purchaseHistory: []};
     if(sellerName && qty>0){
       savedItem.purchaseHistory.push({sellerName, rate:cost, qty, date: todayStr()});
     }
@@ -1986,7 +2032,7 @@ function buildInvoiceHTML(invoiceNumber, dateStr, customerName, customerMobile, 
   const rows = lineItems.map(li=>`
         <tr style="border-bottom:1px solid #ddd;">
           <td style="padding:8px 6px;">${li.name}</td>
-          <td style="text-align:center; padding:8px 6px;">${li.qty}</td>
+          <td style="text-align:center; padding:8px 6px;">${fmtQtyNum(li.qty,li)}${li.unit==='L'?' L':''}</td>
           <td style="text-align:right; padding:8px 6px;">${fmtMoney(li.unitSell)}</td>
           <td style="text-align:right; padding:8px 6px;">${fmtMoney(li.totalSell)}</td>
         </tr>`).join('');
@@ -2055,7 +2101,7 @@ function buildInvoiceWhatsAppText(invoiceNumber, dateStr, lineItems, discount, a
   advance = advance || 0;
   const subtotal = lineItems.reduce((s,li)=>s+li.totalSell, 0);
   const grandTotal = subtotal - discount;
-  const rows = lineItems.map(li=>`• ${li.name} x${li.qty} — ${fmtMoney(li.totalSell)}`).join('\n');
+  const rows = lineItems.map(li=>`• ${li.name} x${fmtQtyNum(li.qty,li)}${li.unit==='L'?'L':''} — ${fmtMoney(li.totalSell)}`).join('\n');
   const totalsBlock = advance>0
     ? `Total Bill: ${fmtMoney(grandTotal)}\nAdvance Paid: -${fmtMoney(advance)}\n*Balance Due: ${fmtMoney(Math.max(0,grandTotal-advance))}*\n\n_Please keep this receipt — bring it (or send someone with it) to collect the item._`
     : (discount>0
@@ -2315,7 +2361,7 @@ function openInvoiceDetailModal(invoiceNumber){
           <div class="item-row" style="padding:6px 0; border-bottom:1px solid var(--border);">
             <div class="item-info">
               <div class="item-name">${li.name}</div>
-              <div class="item-cat">${li.qty} × ${fmtMoney(li.unitSell)}</div>
+              <div class="item-cat">${fmtQtyNum(li.qty,li)}${li.unit==='L'?' L':''} × ${fmtMoney(li.unitSell)}</div>
             </div>
             <div>${fmtMoney(li.totalSell)}</div>
           </div>`).join('')}
@@ -3078,7 +3124,7 @@ function renderItemSale(){
           <div class="item-cat">${catLabel} · ${fmtMoney(i.sell)}</div>
           ${modelsHtml}
         </div>
-        <span class="badge ${availableQty===0?'out':(availableQty<=2?'low':'ok')}">${availableQty===0?'Out':availableQty+' pcs'}</span>
+        <span class="badge ${availableQty===0?'out':(availableQty<=2?'low':'ok')}">${availableQty===0?'Out':fmtQtyWithUnit(availableQty,i)}</span>
       </div>
       ${disabled ? '' : `<button class="secondary" style="width:100%; margin-top:10px" onclick="${btnAction}">${btnLabel}</button>`}
     </div>`;
@@ -3130,22 +3176,35 @@ function openAddToBillModal(id){
   if(available<=0){ showToast('No more stock available for this item'); return; }
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>${it.name} — Add to Bill</h3>
-      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:10px">Available: ${available} pcs · Actual Price: ${fmtMoney(it.sell)}</div>
+  const liter = isLiterUnit(it);
+  const qtyControlHtml = liter ? `
+      <label>Quantity (Liters)</label>
+      <input id="billQtyInput" type="number" inputmode="decimal" step="0.1" min="0.1" max="${available}" value="1" oninput="onBillQtyInputChange('${id}',${available})">
+    ` : `
       <div class="qty-stepper">
         <button onclick="stepBillQty(-1,'${id}',${available})">−</button>
         <div class="qty-val" id="billQtyVal">1</div>
         <button onclick="stepBillQty(1,'${id}',${available})">+</button>
-      </div>
-      <label>Sale Price (per piece) — change here to give a discount</label>
+      </div>`;
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${it.name} — Add to Bill</h3>
+      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:10px">Available: ${fmtQtyWithUnit(available,it)} · Actual Price: ${fmtMoney(it.sell)}${liter?' / L':''}</div>
+      ${qtyControlHtml}
+      <label>Sale Price (per ${liter?'liter':'piece'}) — change here to give a discount</label>
       <input id="billPriceInput" type="number" inputmode="decimal" value="${it.sell}">
       <button class="primary" onclick="confirmAddToBill('${id}')">➕ Add to Bill</button>
     </div>`;
-  overlay.dataset.qty = 1;
+  overlay.dataset.qty = liter ? 1 : 1;
   document.getElementById('app').appendChild(overlay);
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+}
+function onBillQtyInputChange(id, max){
+  const overlay = document.querySelector('.modal-overlay');
+  let q = parseFloat(document.getElementById('billQtyInput').value)||0;
+  if(q<0.1) q=0.1;
+  if(q>max) q=max;
+  overlay.dataset.qty = q;
 }
 function stepBillQty(delta, id, max){
   const overlay = document.querySelector('.modal-overlay');
@@ -3158,9 +3217,9 @@ function stepBillQty(delta, id, max){
 function confirmAddToBill(id){
   const it = items.find(i=>i.id===id);
   const overlay = document.querySelector('.modal-overlay');
-  const qty = parseInt(overlay.dataset.qty);
+  const qty = isLiterUnit(it) ? (parseFloat(overlay.dataset.qty)||0) : parseInt(overlay.dataset.qty);
   const unitSell = parseFloat(document.getElementById('billPriceInput').value)||0;
-  billCart.push({ itemId: it.id, name: it.name, qty, unitCost: it.cost, unitSell, category: it.category, isService: false });
+  billCart.push({ itemId: it.id, name: it.name, qty, unit: it.unit||'pcs', unitCost: it.cost, unitSell, category: it.category, isService: false });
   overlay.remove();
   showToast(`${it.name} added to bill ✓`);
   refreshSaleView();
@@ -3183,7 +3242,7 @@ function openBillCheckoutModal(){
           <div class="item-row" style="padding:8px 0; border-bottom:1px solid var(--border);">
             <div class="item-info">
               <div class="item-name">${c.name}${c.isService?' <span class="badge ok" style="padding:1px 6px; font-size:9.5px;">Service</span>':''}</div>
-              <div class="item-cat">${c.qty} × ${fmtMoney(c.unitSell)} = ${fmtMoney(c.qty*c.unitSell)}</div>
+              <div class="item-cat">${fmtQtyNum(c.qty,c)}${c.unit==='L'?' L':''} × ${fmtMoney(c.unitSell)} = ${fmtMoney(c.qty*c.unitSell)}</div>
             </div>
             <button class="danger-text" style="padding:4px 8px;" onclick="removeBillCartLine(${idx})">✕</button>
           </div>`).join('')}
@@ -3288,7 +3347,7 @@ async function checkoutBill(action){
     const totalProfit = (c.unitSell-c.unitCost)*c.qty;
     const share = subtotal>0 ? totalSell/subtotal : 0;
     newSaleEntries.push({
-      id: uid(), itemId: c.itemId, name: c.name, qty: c.qty,
+      id: uid(), itemId: c.itemId, name: c.name, qty: c.qty, unit: c.unit||'pcs',
       unitCost: c.unitCost, unitSell: c.unitSell,
       totalSell, totalProfit, time: timeStr,
       category: c.category, customerName: customerName||null, customerId,
@@ -3339,18 +3398,24 @@ async function checkoutBill(action){
 function openSaleModal(id){
   saleProfitVisible = false;
   const it = items.find(i=>i.id===id);
+  const liter = isLiterUnit(it);
+  const qtyControlHtml = liter ? `
+      <label>Quantity (Liters)</label>
+      <input id="qtyInput" type="number" inputmode="decimal" step="0.1" min="0.1" max="${it.qty}" value="1" oninput="onQtyInputChange('${id}')">
+    ` : `
+      <div class="qty-stepper">
+        <button onclick="stepQty(-1,'${id}')">−</button>
+        <div class="qty-val" id="qtyVal">1</div>
+        <button onclick="stepQty(1,'${id}')">+</button>
+      </div>`;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
       <h3>${it.name} — Confirm Sale</h3>
-      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:10px">Available Stock: ${it.qty} pcs · Actual Price: ${fmtMoney(it.sell)}</div>
-      <div class="qty-stepper">
-        <button onclick="stepQty(-1,'${id}')">−</button>
-        <div class="qty-val" id="qtyVal">1</div>
-        <button onclick="stepQty(1,'${id}')">+</button>
-      </div>
-      <label>Sale Price (per piece) — change here to give a discount</label>
+      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:10px">Available Stock: ${fmtQtyWithUnit(it.qty,it)} · Actual Price: ${fmtMoney(it.sell)}${liter?' / L':''}</div>
+      ${qtyControlHtml}
+      <label>Sale Price (per ${liter?'liter':'piece'}) — change here to give a discount</label>
       <input id="salePriceInput" type="number" inputmode="decimal" value="${it.sell}" oninput="updateSalePricePreview('${id}')">
       <div id="profitPreviewWrap" ondblclick="toggleSaleProfitPreview()" style="text-align:center; margin-bottom:2px; font-family:'JetBrains Mono'; color:var(--green); cursor:pointer; user-select:none;"><span id="profitPreview" data-amt="${it.sell-it.cost}">*****</span></div>
       <div id="profitPreviewHint" style="text-align:center; font-size:10px; color:var(--muted); margin-bottom:14px;">Double-tap to reveal</div>
@@ -3398,10 +3463,20 @@ function stepQty(delta, id){
   document.getElementById('qtyVal').textContent = q;
   updateSalePricePreview(id);
 }
+function onQtyInputChange(id){
+  const it = items.find(i=>i.id===id);
+  const overlay = document.querySelector('.modal-overlay');
+  let q = parseFloat(document.getElementById('qtyInput').value)||0;
+  if(q<0.1) q=0.1;
+  if(q>it.qty) q=it.qty;
+  overlay.dataset.qty = q;
+  updateSalePricePreview(id);
+  if(overlay.dataset.paymentMethod==='partial') updatePartialPreview();
+}
 function updateSalePricePreview(id){
   const it = items.find(i=>i.id===id);
   const overlay = document.querySelector('.modal-overlay');
-  const q = parseInt(overlay.dataset.qty);
+  const q = parseFloat(overlay.dataset.qty)||0;
   const price = parseFloat(document.getElementById('salePriceInput').value)||0;
   const amt = (price-it.cost)*q;
   const el = document.getElementById('profitPreview');
@@ -3431,7 +3506,7 @@ function setSalePaymentMethod(method){
 }
 function updatePartialPreview(){
   const overlay = document.querySelector('.modal-overlay');
-  const qty = parseInt(overlay.dataset.qty)||1;
+  const qty = parseFloat(overlay.dataset.qty)||1;
   const price = parseFloat(document.getElementById('salePriceInput').value)||0;
   const total = price*qty;
   let cash = parseFloat(document.getElementById('salePartialCash').value)||0;
@@ -3442,7 +3517,7 @@ function updatePartialPreview(){
 }
 async function confirmSale(id){
   const overlay = document.querySelector('.modal-overlay');
-  const qty = parseInt(overlay.dataset.qty);
+  const qty = parseFloat(overlay.dataset.qty)||0;
   const salePrice = parseFloat(document.getElementById('salePriceInput').value)||0;
   const customerNameInput = document.getElementById('saleCustomerName');
   const customerName = customerNameInput ? customerNameInput.value.trim() : '';
@@ -3481,7 +3556,7 @@ async function confirmSale(id){
   const now = new Date();
   const saleId = uid();
   sales.push({
-    id: saleId, itemId: it.id, name: it.name, qty,
+    id: saleId, itemId: it.id, name: it.name, qty, unit: it.unit||'pcs',
     unitCost: it.cost, unitSell: salePrice,
     totalSell, totalProfit: (salePrice-it.cost)*qty,
     time: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
@@ -3561,7 +3636,7 @@ async function openEditSaleModal(dateStr, saleId){
       <label>Item / Service Name</label>
       <input id="es_name" value="${s.name}">
       <div class="row2">
-        <div><label>Quantity</label><input id="es_qty" type="number" inputmode="numeric" value="${s.qty}"></div>
+        <div><label>Quantity ${s.unit==='L'?'(Liters)':''}</label><input id="es_qty" type="number" inputmode="decimal" step="${s.unit==='L'?'0.1':'1'}" value="${s.qty}"></div>
         <div><label>Unit Sell Price</label><input id="es_unitsell" type="number" inputmode="decimal" value="${s.unitSell}"></div>
       </div>
       <label>Unit Cost</label>
@@ -3583,7 +3658,7 @@ async function saveSaleEdit(dateStr, saleId){
   const s = sales.find(x=>x.id===saleId);
   if(!s){ showToast('Sale not found'); return; }
   const newName = document.getElementById('es_name').value.trim();
-  const newQty = parseInt(document.getElementById('es_qty').value)||1;
+  const newQty = s.unit==='L' ? (parseFloat(document.getElementById('es_qty').value)||0.1) : (parseInt(document.getElementById('es_qty').value)||1);
   const newUnitSell = parseFloat(document.getElementById('es_unitsell').value)||0;
   const newUnitCost = parseFloat(document.getElementById('es_unitcost').value)||0;
   const newCustomerName = document.getElementById('es_customer').value.trim();
@@ -5076,7 +5151,7 @@ function openSettingsModal(){
   refreshBackupFolderStatus();
 }
 async function saveShopName(){
-  settings.shopName = document.getElementById('f_shopname').value.trim() || 'Asif Ali Auto Mobile Oil Shop';
+  settings.shopName = document.getElementById('f_shopname').value.trim() || 'Asif Ali Mobil Oil Shop';
   await saveSettings();
   document.getElementById('shopNameText').textContent = settings.shopName;
   document.querySelector('.modal-overlay').remove();
@@ -5210,7 +5285,7 @@ async function exportBackup(){
   showToast('Preparing backup...');
   const backup = await buildBackupObject();
   const json = JSON.stringify(backup, null, 2);
-  const fileName = (settings.shopName || 'Asif Ali Auto Mobile Oil Shop')+' - Backup - '+todayStr()+'.json';
+  const fileName = (settings.shopName || 'Asif Ali Mobil Oil Shop')+' - Backup - '+todayStr()+'.json';
 
   if(FS_ACCESS_SUPPORTED){
     try{
